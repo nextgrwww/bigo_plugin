@@ -1,0 +1,262 @@
+// ==UserScript==
+// @name         Bigo.tv Video to Audio Converter
+// @namespace    http://tampermonkey.net/
+// @version      1.0
+// @description  Converts Bigo.tv live video to audio-only playback
+// @author       You
+// @match        https://www.bigo.tv/*
+// @grant        none
+// @run-at       document-start
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // Check if current URL matches the pattern with numeric ID
+    function isTargetUrl() {
+        const urlPattern = /^https:\/\/www\.bigo\.tv\/\d+$/;
+        return urlPattern.test(window.location.href);
+    }
+
+    // Function to convert video to audio
+    function convertVideoToAudio(videoElement) {
+        if (!videoElement || videoElement._converted) return;
+
+        // Mark as converted to prevent multiple conversions
+        videoElement._converted = true;
+
+        console.log('Converting Bigo.tv video to audio mode');
+
+        // Create an audio context
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+        // Create a media element source from the video
+        const source = audioContext.createMediaElementSource(videoElement);
+
+        // Connect to destination (speakers)
+        source.connect(audioContext.destination);
+
+        // Resume audio context (needed due to browser autoplay policies)
+        audioContext.resume();
+
+        // Create a canvas to capture video frames (optional - to make it look like audio player)
+        const canvas = document.createElement('canvas');
+        canvas.width = videoElement.clientWidth || 400;
+        canvas.height = videoElement.clientHeight || 150;
+        canvas.style.backgroundColor = '#1a1a1a';
+        canvas.style.borderRadius = '8px';
+        canvas.style.boxShadow = '0 2px 10px rgba(0,0,0,0.3)';
+
+        const ctx = canvas.getContext('2d');
+
+        // Draw audio visualizer
+        function drawVisualizer() {
+            if (!videoElement.parentNode || videoElement.style.display === 'none') return;
+
+            const width = canvas.width;
+            const height = canvas.height;
+
+            ctx.fillStyle = '#1a1a1a';
+            ctx.fillRect(0, 0, width, height);
+
+            // Draw "AUDIO ONLY" text
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 14px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('🎵 AUDIO ONLY MODE 🎵', width/2, 30);
+
+            // Draw volume meter style bars
+            const barCount = 60;
+            const barWidth = width / barCount;
+
+            for (let i = 0; i < barCount; i++) {
+                const barHeight = Math.random() * height * 0.5 + height * 0.2;
+                ctx.fillStyle = `hsl(${i * 6}, 70%, 55%)`;
+                ctx.fillRect(i * barWidth, height - barHeight, barWidth - 1, barHeight);
+            }
+
+            // Draw current time
+            if (videoElement.currentTime) {
+                ctx.fillStyle = '#cccccc';
+                ctx.font = '12px Arial';
+                ctx.textAlign = 'center';
+                const minutes = Math.floor(videoElement.currentTime / 60);
+                const seconds = Math.floor(videoElement.currentTime % 60);
+                ctx.fillText(`${minutes}:${seconds.toString().padStart(2,'0')}`, width/2, height - 10);
+            }
+
+            requestAnimationFrame(drawVisualizer);
+        }
+
+        // Replace video with canvas wrapper
+        const parent = videoElement.parentNode;
+        const wrapper = document.createElement('div');
+        wrapper.style.position = 'relative';
+        wrapper.style.display = 'inline-block';
+        wrapper.style.margin = '10px';
+
+        // Hide video but keep it playing for audio
+        videoElement.style.position = 'absolute';
+        videoElement.style.opacity = '0';
+        videoElement.style.pointerEvents = 'none';
+        videoElement.style.width = '1px';
+        videoElement.style.height = '1px';
+
+        // Insert canvas
+        wrapper.appendChild(canvas);
+        parent.insertBefore(wrapper, videoElement);
+        wrapper.appendChild(videoElement);
+
+        // Start visualizer
+        drawVisualizer();
+
+        // Add custom audio controls
+        const controls = document.createElement('div');
+        controls.style.marginTop = '10px';
+        controls.style.textAlign = 'center';
+        controls.style.display = 'flex';
+        controls.style.gap = '10px';
+        controls.style.justifyContent = 'center';
+        controls.style.alignItems = 'center';
+
+        // Play/Pause button
+        const playPauseBtn = document.createElement('button');
+        playPauseBtn.textContent = '⏸';
+        playPauseBtn.style.padding = '5px 15px';
+        playPauseBtn.style.cursor = 'pointer';
+        playPauseBtn.style.backgroundColor = '#4CAF50';
+        playPauseBtn.style.color = 'white';
+        playPauseBtn.style.border = 'none';
+        playPauseBtn.style.borderRadius = '4px';
+        playPauseBtn.style.fontSize = '16px';
+        playPauseBtn.onclick = () => {
+            if (videoElement.paused) {
+                videoElement.play();
+                playPauseBtn.textContent = '⏸';
+            } else {
+                videoElement.pause();
+                playPauseBtn.textContent = '▶';
+            }
+        };
+
+        // Volume slider
+        const volumeSlider = document.createElement('input');
+        volumeSlider.type = 'range';
+        volumeSlider.min = 0;
+        volumeSlider.max = 1;
+        volumeSlider.step = 0.01;
+        volumeSlider.value = 1;
+        volumeSlider.style.width = '120px';
+        volumeSlider.style.cursor = 'pointer';
+        volumeSlider.oninput = (e) => {
+            videoElement.volume = e.target.value;
+        };
+
+        // Volume label
+        const volumeLabel = document.createElement('span');
+        volumeLabel.textContent = '🔊';
+        volumeLabel.style.fontSize = '16px';
+
+        controls.appendChild(playPauseBtn);
+        controls.appendChild(volumeLabel);
+        controls.appendChild(volumeSlider);
+        wrapper.appendChild(controls);
+
+        // Add info text
+        const infoText = document.createElement('div');
+        infoText.style.marginTop = '5px';
+        infoText.style.textAlign = 'center';
+        infoText.style.fontSize = '11px';
+        infoText.style.color = '#888';
+        infoText.textContent = 'Video is playing in audio-only mode';
+        wrapper.appendChild(infoText);
+
+        console.log('Bigo.tv video converted to audio-only mode successfully');
+    }
+
+    // Function to find and convert the video element
+    function findAndConvertVideo() {
+        // Only proceed if URL matches Bigo.tv pattern
+        if (!isTargetUrl()) {
+            console.log('Not a target Bigo.tv URL, skipping conversion');
+            return false;
+        }
+
+        const videoElement = document.getElementById('liveVideo_html5_api');
+        if (videoElement && videoElement.tagName === 'VIDEO') {
+            convertVideoToAudio(videoElement);
+            return true;
+        }
+        return false;
+    }
+
+    // Wait for page to load and find video
+    function initialize() {
+        if (!isTargetUrl()) return;
+
+        console.log('Running on Bigo.tv, waiting for video element...');
+
+        // Method 1: Check immediately if element exists
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => {
+                if (!findAndConvertVideo()) {
+                    setupMutationObserver();
+                }
+            });
+        } else {
+            if (!findAndConvertVideo()) {
+                setupMutationObserver();
+            }
+        }
+    }
+
+    // Use mutation observer for dynamically loaded content
+    function setupMutationObserver() {
+        const observer = new MutationObserver((mutations) => {
+            // Check if our target element was added
+            const videoElement = document.getElementById('liveVideo_html5_api');
+            if (videoElement && videoElement.tagName === 'VIDEO' && !videoElement._converted) {
+                convertVideoToAudio(videoElement);
+                observer.disconnect(); // Stop observing once converted
+            }
+        });
+
+        if (document.body) {
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+        }
+
+        // Also check periodically as a fallback
+        let attempts = 0;
+        const interval = setInterval(() => {
+            if (findAndConvertVideo()) {
+                clearInterval(interval);
+                observer.disconnect();
+            }
+            attempts++;
+            if (attempts > 100) { // Stop after 10 seconds (100 * 100ms)
+                clearInterval(interval);
+                console.log('Video element not found after 10 seconds');
+            }
+        }, 100);
+    }
+
+    // Handle page navigation in Bigo.tv (SPA behavior)
+    let lastUrl = location.href;
+    new MutationObserver(() => {
+        const url = location.href;
+        if (url !== lastUrl) {
+            lastUrl = url;
+            if (isTargetUrl()) {
+                console.log('URL changed, rechecking for video element');
+                setTimeout(findAndConvertVideo, 1000);
+            }
+        }
+    }).observe(document, { subtree: true, childList: true });
+
+    // Start the script
+    initialize();
+
+})();
