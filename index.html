@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Bigo.tv Video to Audio Converter
+// @name         Discord Hackers - Bigo.tv Audio Terminal
 // @namespace    http://tampermonkey.net/
-// @version      1.0
-// @description  Converts Bigo.tv live video to audio-only playback
+// @version      20.13
+// @description  PK detection, chat, themes, logout, level badges, daily counts, suggestions, reply click, favicon, total/monthly beans with inline edit, localStorage quota fix.
 // @author       You
 // @match        https://www.bigo.tv/*
 // @grant        none
@@ -12,251 +12,1637 @@
 (function() {
     'use strict';
 
-    // Check if current URL matches the pattern with numeric ID
-    function isTargetUrl() {
-        const urlPattern = /^https:\/\/www\.bigo\.tv\/\d+$/;
-        return urlPattern.test(window.location.href);
+    if (!/^https:\/\/www\.bigo\.tv\/(?!user(?:\/|$)).+$/.test(location.href)) {
+        console.log('[Bigo Overlay] Not a live room URL, skipping');
+        return;
     }
 
-    // Function to convert video to audio
-    function convertVideoToAudio(videoElement) {
-        if (!videoElement || videoElement._converted) return;
+    console.log('[Bigo Overlay] Script started for', location.href);
+    document.title = 'Discord Hackers';
 
-        // Mark as converted to prevent multiple conversions
-        videoElement._converted = true;
+    // ---- Set Discord favicon ----
+    const faviconUrl = 'https://cdn.prod.website-files.com/6257adef93867e50d84d30e2/636e0a6a49cf127bf92de1e2_icon_clyde_blurple_RGB.png';
+    let link = document.querySelector("link[rel*='icon']") || document.createElement('link');
+    link.type = 'image/x-icon';
+    link.rel = 'shortcut icon';
+    link.href = faviconUrl;
+    document.head.appendChild(link);
 
-        console.log('Converting Bigo.tv video to audio mode');
+    let overlayRoot = null;
+    let hostNickname = 'Streamer';
+    let bigoId = '';
+    let beanCount = '0';
+    let lastChatHtml = '';
+    let displayedMessages = new Set();
+    let chatUpdateInterval = null;
+    let videoMoved = false;
+    let historyLoaded = false;
+    let currentStreamerId = '';
 
-        // Create an audio context
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    let memberMap = new Map();
+    let giftEntries = [];
 
-        // Create a media element source from the video
-        const source = audioContext.createMediaElementSource(videoElement);
+    let togglePlayPause, toggleMute, setVolume, updateUI, startVisualizer;
 
-        // Connect to destination (speakers)
-        source.connect(audioContext.destination);
+    // ---- PK tracking ----
+    let pkOpponent = '';
+    let pkStartTime = 0;
+    let pkTimerInterval = null;
+    let pkActive = false;
+    let pkMonitorInterval = null;
+    let lastPkOpponent = '';
+    let lastPkTime = 0;
 
-        // Resume audio context (needed due to browser autoplay policies)
-        audioContext.resume();
+    // ---- Helper: format timestamp ----
+    function formatTimestamp(date) {
+        return date.toLocaleTimeString([], { hour: '2-digit', minute:'2-digit', second:'2-digit', hour12: false });
+    }
 
-        // Create a canvas to capture video frames (optional - to make it look like audio player)
-        const canvas = document.createElement('canvas');
-        canvas.width = videoElement.clientWidth || 400;
-        canvas.height = videoElement.clientHeight || 150;
-        canvas.style.backgroundColor = '#1a1a1a';
-        canvas.style.borderRadius = '8px';
-        canvas.style.boxShadow = '0 2px 10px rgba(0,0,0,0.3)';
+    // ---- Helper: get today's date string ----
+    function getTodayDateStr() {
+        const now = new Date();
+        return now.getFullYear() + '-' +
+               String(now.getMonth() + 1).padStart(2, '0') + '-' +
+               String(now.getDate()).padStart(2, '0');
+    }
 
-        const ctx = canvas.getContext('2d');
+    // ---- Helper: get current month string (YYYY-MM) ----
+    function getCurrentMonthStr() {
+        const now = new Date();
+        return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+    }
 
-        // Draw audio visualizer
-        function drawVisualizer() {
-            if (!videoElement.parentNode || videoElement.style.display === 'none') return;
-
-            const width = canvas.width;
-            const height = canvas.height;
-
-            ctx.fillStyle = '#1a1a1a';
-            ctx.fillRect(0, 0, width, height);
-
-            // Draw "AUDIO ONLY" text
-            ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 14px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText('🎵 AUDIO ONLY MODE 🎵', width/2, 30);
-
-            // Draw volume meter style bars
-            const barCount = 60;
-            const barWidth = width / barCount;
-
-            for (let i = 0; i < barCount; i++) {
-                const barHeight = Math.random() * height * 0.5 + height * 0.2;
-                ctx.fillStyle = `hsl(${i * 6}, 70%, 55%)`;
-                ctx.fillRect(i * barWidth, height - barHeight, barWidth - 1, barHeight);
-            }
-
-            // Draw current time
-            if (videoElement.currentTime) {
-                ctx.fillStyle = '#cccccc';
-                ctx.font = '12px Arial';
-                ctx.textAlign = 'center';
-                const minutes = Math.floor(videoElement.currentTime / 60);
-                const seconds = Math.floor(videoElement.currentTime % 60);
-                ctx.fillText(`${minutes}:${seconds.toString().padStart(2,'0')}`, width/2, height - 10);
-            }
-
-            requestAnimationFrame(drawVisualizer);
-        }
-
-        // Replace video with canvas wrapper
-        const parent = videoElement.parentNode;
-        const wrapper = document.createElement('div');
-        wrapper.style.position = 'relative';
-        wrapper.style.display = 'inline-block';
-        wrapper.style.margin = '10px';
-
-        // Hide video but keep it playing for audio
-        videoElement.style.position = 'absolute';
-        videoElement.style.opacity = '0';
-        videoElement.style.pointerEvents = 'none';
-        videoElement.style.width = '1px';
-        videoElement.style.height = '1px';
-
-        // Insert canvas
-        wrapper.appendChild(canvas);
-        parent.insertBefore(wrapper, videoElement);
-        wrapper.appendChild(videoElement);
-
-        // Start visualizer
-        drawVisualizer();
-
-        // Add custom audio controls
-        const controls = document.createElement('div');
-        controls.style.marginTop = '10px';
-        controls.style.textAlign = 'center';
-        controls.style.display = 'flex';
-        controls.style.gap = '10px';
-        controls.style.justifyContent = 'center';
-        controls.style.alignItems = 'center';
-
-        // Play/Pause button
-        const playPauseBtn = document.createElement('button');
-        playPauseBtn.textContent = '⏸';
-        playPauseBtn.style.padding = '5px 15px';
-        playPauseBtn.style.cursor = 'pointer';
-        playPauseBtn.style.backgroundColor = '#4CAF50';
-        playPauseBtn.style.color = 'white';
-        playPauseBtn.style.border = 'none';
-        playPauseBtn.style.borderRadius = '4px';
-        playPauseBtn.style.fontSize = '16px';
-        playPauseBtn.onclick = () => {
-            if (videoElement.paused) {
-                videoElement.play();
-                playPauseBtn.textContent = '⏸';
+    // ---- Monthly beans functions ----
+    function getMonthlyStartBeans(streamerId) {
+        if (!streamerId) return null;
+        const key = `monthlyBeansStart_${streamerId}`;
+        const stored = localStorage.getItem(key);
+        if (!stored) return null;
+        try {
+            const data = JSON.parse(stored);
+            if (data.month === getCurrentMonthStr()) {
+                return data.value;
             } else {
-                videoElement.pause();
-                playPauseBtn.textContent = '▶';
+                localStorage.removeItem(key);
+                return null;
             }
-        };
-
-        // Volume slider
-        const volumeSlider = document.createElement('input');
-        volumeSlider.type = 'range';
-        volumeSlider.min = 0;
-        volumeSlider.max = 1;
-        volumeSlider.step = 0.01;
-        volumeSlider.value = 1;
-        volumeSlider.style.width = '120px';
-        volumeSlider.style.cursor = 'pointer';
-        volumeSlider.oninput = (e) => {
-            videoElement.volume = e.target.value;
-        };
-
-        // Volume label
-        const volumeLabel = document.createElement('span');
-        volumeLabel.textContent = '🔊';
-        volumeLabel.style.fontSize = '16px';
-
-        controls.appendChild(playPauseBtn);
-        controls.appendChild(volumeLabel);
-        controls.appendChild(volumeSlider);
-        wrapper.appendChild(controls);
-
-        // Add info text
-        const infoText = document.createElement('div');
-        infoText.style.marginTop = '5px';
-        infoText.style.textAlign = 'center';
-        infoText.style.fontSize = '11px';
-        infoText.style.color = '#888';
-        infoText.textContent = 'Video is playing in audio-only mode';
-        wrapper.appendChild(infoText);
-
-        console.log('Bigo.tv video converted to audio-only mode successfully');
+        } catch(e) {
+            return null;
+        }
     }
 
-    // Function to find and convert the video element
-    function findAndConvertVideo() {
-        // Only proceed if URL matches Bigo.tv pattern
-        if (!isTargetUrl()) {
-            console.log('Not a target Bigo.tv URL, skipping conversion');
-            return false;
+    function setMonthlyStartBeans(streamerId, value) {
+        if (!streamerId) return;
+        const key = `monthlyBeansStart_${streamerId}`;
+        const data = {
+            month: getCurrentMonthStr(),
+            value: parseFloat(value) || 0
+        };
+        try {
+            localStorage.setItem(key, JSON.stringify(data));
+            updateStreamerInfo();
+        } catch(e) {
+            console.warn('[Bigo Overlay] Failed to save monthly beans:', e);
+        }
+    }
+
+    // ---- LocalStorage keys ----
+    function getChatKey(streamerId)   { return `chat_${streamerId}`; }
+    function getMembersKey(streamerId){ return `members_${streamerId}`; }
+    function getGiftsKey(streamerId)  { return `gifts_${streamerId}`; }
+
+    // ---- Chat storage ----
+    function loadChatHistory(streamerId) {
+        const key = getChatKey(streamerId);
+        const stored = localStorage.getItem(key);
+        if (!stored) return [];
+        try { return JSON.parse(stored); } catch(e) { return []; }
+    }
+    function saveChatHistory(streamerId, messages) {
+        const trimmed = messages.slice(-300);
+        try {
+            localStorage.setItem(getChatKey(streamerId), JSON.stringify(trimmed));
+        } catch(e) {
+            console.warn('[Bigo Overlay] Failed to save chat history:', e);
+        }
+    }
+    function appendChatHistory(streamerId, newMessages) {
+        if (!streamerId) return;
+        let existing = loadChatHistory(streamerId);
+        existing.push(...newMessages);
+        saveChatHistory(streamerId, existing);
+    }
+
+    // ---- Members storage (with size limit) ----
+    function loadMembers(streamerId) {
+        const key = getMembersKey(streamerId);
+        const stored = localStorage.getItem(key);
+        if (!stored) return new Map();
+        try {
+            const arr = JSON.parse(stored);
+            const map = new Map();
+            for (let item of arr) {
+                map.set(item.username, {
+                    count: item.count,
+                    lastSeen: item.lastSeen,
+                    level: item.level || '',
+                    levelImage: item.levelImage || '',
+                    date: item.date || ''
+                });
+            }
+            return map;
+        } catch(e) { return new Map(); }
+    }
+    function saveMembers(streamerId, membersMap) {
+        if (!streamerId) return;
+        const arr = Array.from(membersMap.entries())
+            .map(([username, data]) => ({
+                username,
+                count: data.count,
+                lastSeen: data.lastSeen,
+                level: data.level || '',
+                levelImage: data.levelImage || '',
+                date: data.date || ''
+            }))
+            .sort((a, b) => b.lastSeen - a.lastSeen)
+            .slice(0, 500);
+        try {
+            localStorage.setItem(getMembersKey(streamerId), JSON.stringify(arr));
+        } catch(e) {
+            console.warn('[Bigo Overlay] Failed to save members (quota exceeded). Some data may be lost.', e);
+        }
+    }
+
+    // ---- Gifts storage ----
+    function loadGifts(streamerId) {
+        const key = getGiftsKey(streamerId);
+        const stored = localStorage.getItem(key);
+        if (!stored) return [];
+        try { return JSON.parse(stored); } catch(e) { return []; }
+    }
+    function saveGifts(streamerId, gifts) {
+        if (!streamerId) return;
+        const trimmed = gifts.slice(-500);
+        try {
+            localStorage.setItem(getGiftsKey(streamerId), JSON.stringify(trimmed));
+        } catch(e) {
+            console.warn('[Bigo Overlay] Failed to save gifts:', e);
+        }
+    }
+
+    // ---- Escape HTML helper ----
+    function escapeHtml(str) {
+        return str.replace(/[&<>]/g, function(m) {
+            if (m === '&') return '&amp;';
+            if (m === '<') return '&lt;';
+            if (m === '>') return '&gt;';
+            return m;
+        });
+    }
+
+    // ---- Render stored messages ----
+    function renderStoredMessages(messages) {
+        const chatDiv = document.getElementById('chat-messages');
+        if (!chatDiv) return;
+        chatDiv.innerHTML = '';
+        if (!messages.length) {
+            chatDiv.innerHTML = '<div style="color:var(--text-secondary); text-align:center; padding:20px;">No chat history yet...</div>';
+            return;
+        }
+        for (const msg of messages) {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = 'chat-msg-wrapper';
+
+            let levelHtml = '';
+            if (msg.levelImage) {
+                levelHtml = `<div class="user-grade" style="display:inline-block; background-image:url('${msg.levelImage}'); background-size:100% 100%; background-repeat:no-repeat; width:41px; height:18.7px; font-size:11px; color:#fff; line-height:18.7px; text-align:center; padding:1px 0; vertical-align:middle; margin-right:4px;">${escapeHtml(msg.level)}</div>`;
+            }
+
+            msgDiv.innerHTML = `
+                <div class="chat-msg-bubble">
+                    <div class="chat-msg-header-inline">
+                        ${levelHtml}
+                        <span class="chat-username" style="color:#4ade80; font-weight:bold; cursor:pointer;">${escapeHtml(msg.userName)}</span>
+                        <span class="chat-colon" style="color:var(--text-primary);">:</span>
+                    </div>
+                    <span class="chat-text" style="color:var(--text-primary); word-break:break-word;">${escapeHtml(msg.message)}</span>
+                    <span class="chat-time">${escapeHtml(msg.timeStr)}</span>
+                </div>
+            `;
+            chatDiv.appendChild(msgDiv);
+        }
+        chatDiv.scrollTop = chatDiv.scrollHeight;
+    }
+
+    // ---- Load all persistent data ----
+    function loadAllDataForStreamer(streamerId) {
+        if (!streamerId || historyLoaded) return;
+        historyLoaded = true;
+        currentStreamerId = streamerId;
+
+        const storedChat = loadChatHistory(streamerId);
+        if (storedChat.length) renderStoredMessages(storedChat);
+
+        const storedMembers = loadMembers(streamerId);
+        if (storedMembers.size) {
+            const today = getTodayDateStr();
+            for (let [username, data] of storedMembers) {
+                if (data.date !== today) {
+                    data.count = 0;
+                    data.date = today;
+                }
+            }
+            memberMap = storedMembers;
+            renderMembersList();
         }
 
-        const videoElement = document.getElementById('liveVideo_html5_api');
-        if (videoElement && videoElement.tagName === 'VIDEO') {
-            convertVideoToAudio(videoElement);
-            return true;
+        const storedGifts = loadGifts(streamerId);
+        if (storedGifts.length) {
+            giftEntries = storedGifts;
+            renderGiftList();
         }
+    }
+
+    // ---- Extract level info ----
+    function extractLevelInfo(item) {
+        const gradeDiv = item.querySelector('.user-grade');
+        if (gradeDiv) {
+            const style = gradeDiv.getAttribute('style') || '';
+            const bgMatch = style.match(/background-image:\s*url\(['"]?([^'"]+)['"]?\)/i);
+            const levelText = gradeDiv.textContent.trim();
+            return {
+                level: levelText,
+                levelImage: bgMatch ? bgMatch[1] : ''
+            };
+        }
+        return { level: '', levelImage: '' };
+    }
+
+    // ---- Update functions with daily reset ----
+    function addOrIncrementMember(username, levelInfo) {
+        if (!username) return;
+        const now = Date.now();
+        const today = getTodayDateStr();
+        const existing = memberMap.get(username);
+
+        if (existing) {
+            if (existing.date !== today) {
+                existing.count = 0;
+                existing.date = today;
+            }
+            existing.count++;
+            existing.lastSeen = now;
+            if (levelInfo) {
+                if (levelInfo.level) existing.level = levelInfo.level;
+                if (levelInfo.levelImage) existing.levelImage = levelInfo.levelImage;
+            }
+        } else {
+            memberMap.set(username, {
+                count: 1,
+                lastSeen: now,
+                level: levelInfo ? levelInfo.level : '',
+                levelImage: levelInfo ? levelInfo.levelImage : '',
+                date: today
+            });
+        }
+        renderMembersList();
+        saveMembers(currentStreamerId, memberMap);
+    }
+
+    function addGiftEntry(username, giftText, levelInfo) {
+        const now = new Date();
+        const timestampStr = formatTimestamp(now);
+        const entry = {
+            username,
+            giftText,
+            timestamp: now.getTime(),
+            timestampStr,
+            level: levelInfo ? levelInfo.level : '',
+            levelImage: levelInfo ? levelInfo.levelImage : ''
+        };
+        giftEntries.push(entry);
+        renderGiftList();
+        saveGifts(currentStreamerId, giftEntries);
+    }
+
+    // ---- Render members list ----
+    function renderMembersList() {
+        const membersContainer = document.getElementById('members-list');
+        if (!membersContainer) return;
+        if (memberMap.size === 0) {
+            membersContainer.innerHTML = '<div style="color:var(--text-secondary); padding:8px;">No members yet...</div>';
+            return;
+        }
+        const sorted = Array.from(memberMap.entries())
+            .sort((a, b) => b[1].lastSeen - a[1].lastSeen);
+        let html = '';
+        let rank = 1;
+        for (let [name, data] of sorted) {
+            let levelHtml = '';
+            if (data.levelImage) {
+                levelHtml = `<div class="user-grade" style="display:inline-block; background-image:url('${data.levelImage}'); background-size:100% 100%; background-repeat:no-repeat; width:35px; height:16px; font-size:10px; color:#fff; line-height:16px; text-align:center; vertical-align:middle; margin-right:4px;">${data.level}</div>`;
+            }
+            html += `<div style="display:flex; justify-content:space-between; align-items:center; padding:4px 0; border-bottom:1px solid var(--border-color);">
+                        <div style="display:flex; align-items:center; gap:4px;">
+                            <span style="color:var(--text-secondary); min-width:20px;">${rank}.</span>
+                            ${levelHtml}
+                            <span style="color:#4ade80;">${escapeHtml(name)}</span>
+                        </div>
+                        <span style="color:#3b82f6;">${data.count} msgs</span>
+                     </div>`;
+            rank++;
+        }
+        membersContainer.innerHTML = html;
+    }
+
+    // ---- Render gift list ----
+    function renderGiftList() {
+        const giftContainer = document.getElementById('gifting-list');
+        if (!giftContainer) return;
+        if (giftEntries.length === 0) {
+            giftContainer.innerHTML = '<div style="color:var(--text-secondary); padding:8px;">No gifts yet...</div>';
+            return;
+        }
+        const reversed = [...giftEntries].reverse();
+        let html = '';
+        for (let entry of reversed) {
+            let levelHtml = '';
+            if (entry.levelImage) {
+                levelHtml = `<div class="user-grade" style="display:inline-block; background-image:url('${entry.levelImage}'); background-size:100% 100%; background-repeat:no-repeat; width:35px; height:16px; font-size:10px; color:#fff; line-height:16px; text-align:center; vertical-align:middle; margin-right:4px;">${entry.level}</div>`;
+            }
+            html += `<div style="display:flex; justify-content:space-between; align-items:center; padding:4px 0; border-bottom:1px solid var(--border-color); font-size:12px;">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <span style="color:#fbbf24;">🎁</span>
+                            ${levelHtml}
+                            <span style="color:#4ade80;">${escapeHtml(entry.username)}</span>
+                            <span style="color:var(--text-primary);">${escapeHtml(entry.giftText)}</span>
+                        </div>
+                        <span style="color:var(--text-secondary); font-size:11px;">${escapeHtml(entry.timestampStr)}</span>
+                     </div>`;
+        }
+        giftContainer.innerHTML = html;
+    }
+
+    // ---- Render suggestions ----
+    function renderSuggestions() {
+        const container = document.getElementById('suggestions-list');
+        if (!container) return;
+        const items = document.querySelectorAll('.room-recommend-live-list .showbiz-room-item a');
+        if (!items.length) {
+            container.innerHTML = '<div style="color:var(--text-secondary); padding:8px;">No suggestions available.</div>';
+            return;
+        }
+        let html = '';
+        items.forEach((link) => {
+            const href = link.getAttribute('href') || '';
+            const streamerId = href.replace(/^\//, '');
+            const titleElem = link.querySelector('.room-name');
+            const nameElem = link.querySelector('.name-box');
+            const title = titleElem ? titleElem.textContent.trim() : '';
+            const name = nameElem ? nameElem.textContent.trim() : streamerId;
+            const displayName = title || name || streamerId;
+            html += `
+                <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border-color);">
+                    <a href="${href}" target="_blank" style="color:#4ade80; text-decoration:none; display:flex; flex-direction:column;">
+                        <span style="font-weight:bold;">${escapeHtml(displayName)}</span>
+                        <span style="font-size:11px; color:var(--text-secondary);">ID: ${escapeHtml(streamerId)}</span>
+                    </a>
+                    <span style="color:var(--text-secondary); font-size:11px;">🎥 LIVE</span>
+                </div>
+            `;
+        });
+        container.innerHTML = html;
+    }
+
+    // ---- PK functions ----
+    function startPKTimer(opponent) {
+        if (!opponent || opponent === hostNickname) return;
+        if (pkTimerInterval) {
+            clearInterval(pkTimerInterval);
+            pkTimerInterval = null;
+        }
+        pkOpponent = opponent;
+        pkStartTime = Date.now();
+        pkActive = true;
+        updatePKUI();
+        pkTimerInterval = setInterval(updatePKUI, 1000);
+    }
+
+    function updatePKUI() {
+        const pkContainer = document.getElementById('pk-info');
+        if (!pkContainer) return;
+        if (!pkActive) {
+            pkContainer.innerHTML = '<div style="color:var(--text-secondary); font-size:11px; padding:4px 0;">No PK started</div>';
+            return;
+        }
+        const elapsed = Math.floor((Date.now() - pkStartTime) / 1000);
+        const remaining = Math.max(0, 300 - elapsed);
+        const mins = Math.floor(remaining / 60);
+        const secs = remaining % 60;
+        const timeStr = `${mins}:${secs.toString().padStart(2, '0')}`;
+        if (remaining === 0) {
+            pkContainer.innerHTML = `
+                <div style="color:#fbbf24; font-size:11px; padding:4px 0;">
+                    <div style="font-weight:bold; color:#fbbf24;">⚔️ LAST PK STARTED</div>
+                    <div style="color:var(--text-primary); margin-top:2px;">Opponent: ${escapeHtml(pkOpponent)}</div>
+                    <div style="color:#ef4444; margin-top:2px;">⏱️ PK probably finished</div>
+                </div>
+            `;
+            pkActive = false;
+            if (pkTimerInterval) {
+                clearInterval(pkTimerInterval);
+                pkTimerInterval = null;
+            }
+        } else {
+            pkContainer.innerHTML = `
+                <div style="color:#fbbf24; font-size:11px; padding:4px 0;">
+                    <div style="font-weight:bold; color:#fbbf24;">⚔️ LAST PK STARTED</div>
+                    <div style="color:var(--text-primary); margin-top:2px;">Opponent: ${escapeHtml(pkOpponent)}</div>
+                    <div style="color:#3b82f6; margin-top:2px;">⏱️ ${timeStr} remaining</div>
+                </div>
+            `;
+        }
+    }
+
+    function displayPKMessage(opponent) {
+        const chatDiv = document.getElementById('chat-messages');
+        if (!chatDiv) return;
+        if (chatDiv.children.length === 1 && chatDiv.children[0].innerText.includes('No chat history')) {
+            chatDiv.innerHTML = '';
+        }
+        const now = new Date();
+        const timeStr = formatTimestamp(now);
+
+        const msgDiv = document.createElement('div');
+        msgDiv.className = 'chat-msg-wrapper';
+        msgDiv.style.color = '#fbbf24';
+
+        msgDiv.innerHTML = `
+            <div class="chat-msg-bubble">
+                <div class="chat-msg-header-inline">
+                    <span style="color:#fbbf24;">⚔️</span>
+                    <span style="color:#4ade80;">${escapeHtml(hostNickname)}</span>
+                    <span style="color:var(--text-primary);">invites</span>
+                    <span style="color:#4ade80;">${escapeHtml(opponent)}</span>
+                    <span style="color:var(--text-primary);">to PK</span>
+                </div>
+                <span class="chat-time">${escapeHtml(timeStr)}</span>
+            </div>
+        `;
+        chatDiv.appendChild(msgDiv);
+        chatDiv.scrollTop = chatDiv.scrollHeight;
+    }
+
+    function scanForPK() {
+        const chatContainer = document.querySelector('.chat__container');
+        if (!chatContainer) return;
+        const items = chatContainer.querySelectorAll('.chat-item:not(.chat-item-hide)');
+        for (const item of items) {
+            const textSpan = item.querySelector('.user-text-content');
+            if (!textSpan) continue;
+            const message = textSpan.textContent.trim();
+            if (!message) continue;
+            const inviteMatch = message.match(/(.+?)\s+invites\s+(.+?)\s+to\s+PK/i);
+            if (inviteMatch) {
+                const opponent = inviteMatch[2].trim();
+                const inviter = inviteMatch[1].trim();
+                if (opponent && opponent !== hostNickname && opponent !== '') {
+                    const now = Date.now();
+                    if (opponent !== lastPkOpponent || (now - lastPkTime) > 300000) {
+                        lastPkOpponent = opponent;
+                        lastPkTime = now;
+                        startPKTimer(opponent);
+                        displayPKMessage(opponent);
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
+    let chatObserver = null;
+
+    function setupChatObserver() {
+        const chatContainer = document.querySelector('.chat__container');
+        if (!chatContainer) {
+            setTimeout(setupChatObserver, 500);
+            return;
+        }
+        if (chatObserver) chatObserver.disconnect();
+        chatObserver = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                for (const addedNode of mutation.addedNodes) {
+                    if (addedNode.nodeType === Node.ELEMENT_NODE && addedNode.classList && addedNode.classList.contains('chat-item')) {
+                        const textSpan = addedNode.querySelector('.user-text-content');
+                        if (textSpan) {
+                            const message = textSpan.textContent.trim();
+                            if (message) {
+                                const inviteMatch = message.match(/(.+?)\s+invites\s+(.+?)\s+to\s+PK/i);
+                                if (inviteMatch) {
+                                    const opponent = inviteMatch[2].trim();
+                                    const inviter = inviteMatch[1].trim();
+                                    if (opponent && opponent !== hostNickname && opponent !== '') {
+                                        const now = Date.now();
+                                        if (opponent !== lastPkOpponent || (now - lastPkTime) > 300000) {
+                                            lastPkOpponent = opponent;
+                                            lastPkTime = now;
+                                            startPKTimer(opponent);
+                                            displayPKMessage(opponent);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        chatObserver.observe(chatContainer, { childList: true, subtree: true });
+    }
+
+    // ---- Hide original page ----
+    function hideOriginalContent() {
+        if (document.getElementById('bigo-hide-style')) return;
+        const style = document.createElement('style');
+        style.id = 'bigo-hide-style';
+        style.textContent = `
+            body > :not(#terminal-overlay-root) {
+                opacity: 0 !important;
+                visibility: hidden !important;
+                pointer-events: none !important;
+                position: absolute !important;
+                top: -9999px !important;
+                left: -9999px !important;
+            }
+            .user_words_msg, .user_words_msg * {
+                opacity: 1 !important;
+                visibility: visible !important;
+                pointer-events: auto !important;
+                position: static !important;
+                top: auto !important;
+                left: auto !important;
+            }
+            #liveVideo_html5_api {
+                opacity: 0 !important;
+                visibility: hidden !important;
+                position: absolute !important;
+                top: -9999px !important;
+                left: -9999px !important;
+                width: 1px !important;
+                height: 1px !important;
+                pointer-events: none !important;
+            }
+            body {
+                background: black !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                overflow: hidden !important;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    function createOverlayContainer() {
+        if (document.getElementById('terminal-overlay-root')) return;
+        const root = document.createElement('div');
+        root.id = 'terminal-overlay-root';
+        root.style.cssText = 'position:fixed; top:0; left:0; width:100%; height:100%; z-index:999999; background:#000; overflow:hidden;';
+        document.documentElement.style.overflow = 'hidden';
+        document.body.appendChild(root);
+        overlayRoot = root;
+    }
+
+    // ---- Move modal into overlay ----
+    function moveModalIntoOverlay(modal) {
+        if (!modal || !overlayRoot) return;
+        if (modal.parentElement === overlayRoot) return;
+        overlayRoot.appendChild(modal);
+        modal.style.cssText = `
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            bottom: 0 !important;
+            z-index: 10000001 !important;
+            opacity: 1 !important;
+            visibility: visible !important;
+            pointer-events: auto !important;
+            display: flex !important;
+            align-items: center;
+            justify-content: center;
+            transform: none !important;
+            background: rgba(0,0,0,0.5) !important;
+        `;
+        const content = modal.querySelector('.basePopup-content');
+        if (content) {
+            content.style.cssText = `
+                position: relative !important;
+                z-index: 2 !important;
+                opacity: 1 !important;
+                visibility: visible !important;
+                pointer-events: auto !important;
+            `;
+        }
+        overlayRoot.style.zIndex = '999998';
+        setupModalCloseDetection(modal);
+    }
+
+    function setupModalCloseDetection(modal) {
+        const removalObserver = new MutationObserver((mutations) => {
+            for (let mutation of mutations) {
+                for (let removedNode of mutation.removedNodes) {
+                    if (removedNode === modal || removedNode.contains(modal)) {
+                        if (overlayRoot) overlayRoot.style.zIndex = '999999';
+                        removalObserver.disconnect();
+                        return;
+                    }
+                }
+            }
+        });
+        removalObserver.observe(overlayRoot, { childList: true, subtree: true });
+    }
+
+    function observeLoginModal() {
+        let existingModal = document.querySelector('.BasePopup-Component');
+        if (existingModal) {
+            moveModalIntoOverlay(existingModal);
+            return;
+        }
+        const observer = new MutationObserver((mutations) => {
+            for (let mutation of mutations) {
+                for (let addedNode of mutation.addedNodes) {
+                    if (addedNode.nodeType === Node.ELEMENT_NODE && addedNode.classList && addedNode.classList.contains('BasePopup-Component')) {
+                        moveModalIntoOverlay(addedNode);
+                        observer.disconnect();
+                        return;
+                    }
+                }
+            }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+        setTimeout(() => observer.disconnect(), 10000);
+    }
+
+    function clickLoginButton(btn) {
+        const origDisplay = btn.style.display;
+        const origVisibility = btn.style.visibility;
+        const origOpacity = btn.style.opacity;
+        const origPointerEvents = btn.style.pointerEvents;
+        const origPosition = btn.style.position;
+        const origZIndex = btn.style.zIndex;
+
+        btn.style.display = 'block';
+        btn.style.visibility = 'visible';
+        btn.style.opacity = '1';
+        btn.style.pointerEvents = 'auto';
+        btn.style.position = 'fixed';
+        btn.style.top = '50%';
+        btn.style.left = '50%';
+        btn.style.transform = 'translate(-50%, -50%)';
+        btn.style.zIndex = '10000002';
+
+        const clickEvent = new MouseEvent('click', {
+            view: window,
+            bubbles: true,
+            cancelable: true,
+            clientX: window.innerWidth / 2,
+            clientY: window.innerHeight / 2,
+        });
+        btn.dispatchEvent(clickEvent);
+
+        setTimeout(() => {
+            btn.style.display = origDisplay || '';
+            btn.style.visibility = origVisibility || '';
+            btn.style.opacity = origOpacity || '';
+            btn.style.pointerEvents = origPointerEvents || '';
+            btn.style.position = origPosition || '';
+            btn.style.transform = '';
+            btn.style.zIndex = origZIndex || '';
+        }, 200);
+    }
+
+    // ---- Login state ----
+    function getUserInfo() {
+        try {
+            const bigo = window.__BIGOLIVE__;
+            if (bigo && bigo.state && bigo.state.userInfo) {
+                const user = bigo.state.userInfo;
+                if (user.nick_name && user.nick_name !== '') {
+                    return {
+                        nickname: user.nick_name,
+                        avatar: user.avatar || user.avatar_url || '',
+                        bigoId: user.bigo_id || user.clientBigoId || '',
+                    };
+                }
+            }
+            return null;
+        } catch(e) {
+            return null;
+        }
+    }
+
+    // ---- Logout function ----
+    function performLogout() {
+        console.log('[Bigo Overlay] Attempting to logout...');
+        try {
+            const bigo = window.__BIGOLIVE__;
+            if (bigo && bigo.state && bigo.state.userInfo) {
+                if (bigo.state.userInfo) {
+                    bigo.state.userInfo.nick_name = '';
+                    bigo.state.userInfo.bigo_id = '';
+                    bigo.state.userInfo.avatar = '';
+                }
+                console.log('[Bigo Overlay] Cleared user info from state.');
+            }
+        } catch(e) {
+            console.log('[Bigo Overlay] Could not clear state:', e);
+        }
+        try {
+            const logoutLink = document.querySelector('.head-right__logined-box .btn-logout a');
+            if (logoutLink) {
+                const parent = logoutLink.closest('.btn-logout');
+                if (parent) {
+                    parent.style.display = 'flex';
+                    parent.style.visibility = 'visible';
+                    parent.style.opacity = '1';
+                    parent.style.pointerEvents = 'auto';
+                }
+                logoutLink.style.display = 'block';
+                logoutLink.style.visibility = 'visible';
+                logoutLink.style.opacity = '1';
+                logoutLink.style.pointerEvents = 'auto';
+                console.log('[Bigo Overlay] Clicking logout link.');
+                logoutLink.click();
+                return true;
+            }
+        } catch(e) {
+            console.log('[Bigo Overlay] Could not click logout button:', e);
+        }
+        try {
+            const allLogoutBtns = document.querySelectorAll('[href*="logout"], .btn-logout, [data-action="logout"]');
+            for (const btn of allLogoutBtns) {
+                if (btn.offsetParent !== null || btn.style.display !== 'none') {
+                    console.log('[Bigo Overlay] Found a visible logout button, clicking it.');
+                    btn.click();
+                    return true;
+                }
+            }
+        } catch(e) {
+            console.log('[Bigo Overlay] Could not find any logout button:', e);
+        }
+        console.log('[Bigo Overlay] Using last resort: navigating to logout URL.');
+        window.location.href = 'https://www.bigo.tv/logout?force=1';
         return false;
     }
 
-    // Wait for page to load and find video
-    function initialize() {
-        if (!isTargetUrl()) return;
-
-        console.log('Running on Bigo.tv, waiting for video element...');
-
-        // Method 1: Check immediately if element exists
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', () => {
-                if (!findAndConvertVideo()) {
-                    setupMutationObserver();
-                }
-            });
-        } else {
-            if (!findAndConvertVideo()) {
-                setupMutationObserver();
+    // ---- Updated login UI ----
+    function updateLoginUI() {
+        const loginLink = document.getElementById('login-link');
+        if (!loginLink) return;
+        const headerContainer = loginLink.parentElement;
+        if (!headerContainer) return;
+        const existingUserInfo = document.getElementById('user-info-display');
+        if (existingUserInfo) existingUserInfo.remove();
+        const user = getUserInfo();
+        if (user && user.nickname) {
+            loginLink.style.display = 'none';
+            const userInfo = document.createElement('div');
+            userInfo.id = 'user-info-display';
+            userInfo.style.cssText = `
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                color: var(--text-primary);
+            `;
+            const avatarClone = document.createElement('div');
+            avatarClone.style.cssText = `
+                width: 28px;
+                height: 28px;
+                border-radius: 50%;
+                overflow: hidden;
+                flex-shrink: 0;
+                background: #5865F2;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: #fff;
+                font-size: 12px;
+                font-weight: bold;
+            `;
+            if (user.avatar && user.avatar.startsWith('http')) {
+                const img = document.createElement('img');
+                img.src = user.avatar;
+                img.style.cssText = 'width:100%; height:100%; object-fit:cover;';
+                avatarClone.appendChild(img);
+            } else {
+                avatarClone.textContent = user.nickname.charAt(0).toUpperCase();
             }
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = user.nickname;
+            nameSpan.style.cssText = `
+                font-size: 14px;
+                color: var(--text-primary);
+                max-width: 120px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            `;
+            const logoutBtn = document.createElement('span');
+            logoutBtn.textContent = 'Logout';
+            logoutBtn.title = 'Logout from Bigo';
+            logoutBtn.style.cssText = `
+                cursor: pointer;
+                color: var(--text-secondary);
+                font-size: 12px;
+                padding: 4px 8px;
+                border-radius: 4px;
+                background: var(--bg-tertiary);
+                transition: 0.2s;
+                border: 1px solid transparent;
+            `;
+            logoutBtn.addEventListener('mouseenter', () => {
+                logoutBtn.style.color = '#ef4444';
+                logoutBtn.style.borderColor = '#ef4444';
+            });
+            logoutBtn.addEventListener('mouseleave', () => {
+                logoutBtn.style.color = 'var(--text-secondary)';
+                logoutBtn.style.borderColor = 'transparent';
+            });
+            logoutBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                performLogout();
+            });
+            userInfo.appendChild(avatarClone);
+            userInfo.appendChild(nameSpan);
+            userInfo.appendChild(logoutBtn);
+            headerContainer.appendChild(userInfo);
+            enableChatInput();
+        } else {
+            loginLink.style.display = '';
+            disableChatInput();
         }
     }
 
-    // Use mutation observer for dynamically loaded content
-    function setupMutationObserver() {
-        const observer = new MutationObserver((mutations) => {
-            // Check if our target element was added
-            const videoElement = document.getElementById('liveVideo_html5_api');
-            if (videoElement && videoElement.tagName === 'VIDEO' && !videoElement._converted) {
-                convertVideoToAudio(videoElement);
-                observer.disconnect(); // Stop observing once converted
+    // ---- Chat sending ----
+    function sendMessage(text) {
+        const textarea = document.querySelector('.user_words_msg textarea');
+        const sendBtn = document.querySelector('.user_words_msg .send_btn');
+        if (!textarea || !sendBtn) return false;
+        textarea.value = text;
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        sendBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        return true;
+    }
+
+    // ---- Chat input management ----
+    function enableChatInput() {
+        const overlayChatArea = document.getElementById('chat-input-area');
+        if (!overlayChatArea) return;
+        if (overlayChatArea.querySelector('#overlay-chat-input')) return;
+        overlayChatArea.innerHTML = '';
+        overlayChatArea.style.cssText = 'border-top:1px solid var(--border-color); padding:8px 12px; background:var(--bg-secondary); display:flex; align-items:center; gap:8px;';
+        const input = document.createElement('input');
+        input.id = 'overlay-chat-input';
+        input.type = 'text';
+        input.placeholder = 'Type a message...';
+        input.style.cssText = 'flex:1; background:transparent; border:1px solid var(--border-color); border-radius:4px; padding:6px 10px; color:var(--text-primary); font-family:var(--font-family); font-size:13px; outline:none;';
+        const sendButton = document.createElement('button');
+        sendButton.textContent = 'Send';
+        sendButton.style.cssText = 'padding:6px 16px; background:#5865F2; border:none; border-radius:4px; color:#fff; cursor:pointer; font-size:13px;';
+        sendButton.addEventListener('click', function(e) {
+            const text = input.value.trim();
+            if (text) {
+                if (sendMessage(text)) input.value = '';
             }
         });
+        input.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                sendButton.click();
+            }
+        });
+        overlayChatArea.appendChild(input);
+        overlayChatArea.appendChild(sendButton);
+    }
 
-        if (document.body) {
-            observer.observe(document.body, {
-                childList: true,
-                subtree: true
+    function disableChatInput() {
+        const overlayChatArea = document.getElementById('chat-input-area');
+        if (!overlayChatArea) return;
+        if (overlayChatArea.querySelector('#chat-input-placeholder')) return;
+        overlayChatArea.innerHTML = `
+            <span style="color:#22c55e;">&gt;</span>
+            <input id="chat-input-placeholder" type="text" placeholder="Read‑only chat mirror" style="flex:1; background:transparent; border:none; color:var(--text-primary); outline:none; font-family:var(--font-family);" disabled>
+        `;
+        overlayChatArea.style.cssText = 'border-top:1px solid var(--border-color); padding:8px 12px; background:var(--bg-secondary); display:flex; align-items:center; gap:8px;';
+    }
+
+    // ---- Update streamer info with bean displays ----
+    function updateStreamerInfo() {
+        const nickElem = document.querySelector('h1.host-nickname');
+        if (nickElem) hostNickname = nickElem.textContent.trim();
+        const bigoElem = document.querySelector('.info-bigoId');
+        if (bigoElem) {
+            let raw = bigoElem.textContent.trim();
+            const match = raw.match(/(?:BIGO ID:)?\s*(.*)/i);
+            const newId = match ? match[1].trim() : raw;
+            if (newId && newId !== bigoId) {
+                bigoId = newId;
+                if (!historyLoaded && bigoId) loadAllDataForStreamer(bigoId);
+            }
+        }
+        const beanElem = document.querySelector('.info-bean');
+        if (beanElem) {
+            const newBean = beanElem.textContent.trim();
+            if (newBean && newBean !== beanCount) {
+                beanCount = newBean;
+            }
+        }
+        const hostSpan = document.getElementById('hostname');
+        if (hostSpan) hostSpan.textContent = hostNickname;
+        const bigoSpan = document.getElementById('bigo-id');
+        if (bigoSpan) bigoSpan.textContent = bigoId || '?';
+        const totalBeanSpan = document.getElementById('total-beans');
+        if (totalBeanSpan) totalBeanSpan.textContent = beanCount || '0';
+
+        // Update monthly beans display
+        const monthlyDisplaySpan = document.getElementById('monthly-beans-display');
+        if (monthlyDisplaySpan && bigoId) {
+            const startVal = getMonthlyStartBeans(bigoId);
+            const total = parseFloat(beanCount) || 0;
+            if (startVal !== null && !isNaN(startVal)) {
+                const monthly = Math.max(0, total - startVal);
+                monthlyDisplaySpan.textContent = monthly.toString();
+            } else {
+                monthlyDisplaySpan.textContent = 'Inconclusive';
+            }
+        }
+        renderSuggestions();
+    }
+
+    // ---- Theme system ----
+    const THEME_STORAGE_KEY = 'bigo-terminal-theme';
+    function getSavedTheme() {
+        return localStorage.getItem(THEME_STORAGE_KEY) || 'terminal';
+    }
+    function setTheme(theme) {
+        if (!overlayRoot) return;
+        localStorage.setItem(THEME_STORAGE_KEY, theme);
+        const root = overlayRoot;
+        root.setAttribute('data-theme', theme); // Set theme attribute for dynamic bubble styling
+
+        const themes = {
+            terminal: {
+                '--bg-primary': '#000000',
+                '--bg-secondary': '#0a0a0a',
+                '--bg-tertiary': '#0f0f0f',
+                '--border-color': '#444444',
+                '--text-primary': '#cccccc',
+                '--text-secondary': '#666666',
+                '--font-family': 'monospace',
+                '--border-radius': '0px',
+            },
+            dark: {
+                '--bg-primary': '#1e1e1e',
+                '--bg-secondary': '#2c2c2c',
+                '--bg-tertiary': '#323232',
+                '--border-color': '#3a3a3a',
+                '--text-primary': '#f5f5f7',
+                '--text-secondary': '#98989d',
+                '--font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+                '--border-radius': '8px',
+            },
+            light: {
+                '--bg-primary': '#f5f5f7',
+                '--bg-secondary': '#e8e8ed',
+                '--bg-tertiary': '#dcdce0',
+                '--border-color': '#d1d1d6',
+                '--text-primary': '#1d1d1f',
+                '--text-secondary': '#6e6e73',
+                '--font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+                '--border-radius': '8px',
+            }
+        };
+        const vars = themes[theme] || themes.terminal;
+        for (const [prop, value] of Object.entries(vars)) {
+            root.style.setProperty(prop, value);
+        }
+        if (theme === 'light') {
+            document.body.style.background = '#f5f5f7';
+        } else {
+            document.body.style.background = 'black';
+        }
+    }
+
+    // ---- Build the terminal UI with inline edit for monthly beans ----
+    function buildTerminalUI() {
+        if (!overlayRoot) return;
+        const host = hostNickname.replace(/[<>]/g, '');
+        const bigo = bigoId || 'loading...';
+        const bean = beanCount || '0';
+        const discordLogoUrl = 'https://cdn.prod.website-files.com/6257adef93867e50d84d30e2/636e0a6a49cf127bf92de1e2_icon_clyde_blurple_RGB.png';
+        setTheme(getSavedTheme());
+
+        overlayRoot.innerHTML = `
+            <div style="display:flex; flex-direction:column; height:100%; font-family:var(--font-family);">
+                <div style="border-bottom:1px solid var(--border-color); padding:0 24px; height:48px; display:flex; align-items:center; justify-content:space-between; background:var(--bg-secondary);">
+                    <div style="display:flex; align-items:center; gap:12px;">
+                        <img src="${discordLogoUrl}" style="height:28px; width:28px;" alt="Discord Logo">
+                        <span style="font-size:18px; font-weight:bold; color:#5865F2;">DISCORD HACKERS</span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:16px;">
+                        <div id="login-link" style="cursor:pointer; color:#5865F2; font-weight:600; font-size:14px; padding:6px 12px; border:1px solid #5865F2; border-radius:4px; background:transparent; transition:0.2s;"
+                             onmouseover="this.style.background='#5865F2'; this.style.color='#fff';"
+                             onmouseout="this.style.background='transparent'; this.style.color='#5865F2';">
+                            Login
+                        </div>
+                        <div id="theme-selector-container" style="display:flex; align-items:center; gap:6px;">
+                            <span style="font-size:12px; color:var(--text-secondary);">Theme:</span>
+                            <select id="theme-selector" style="background:var(--bg-tertiary); border:1px solid var(--border-color); border-radius:4px; color:var(--text-primary); font-family:var(--font-family); font-size:12px; padding:4px 8px; outline:none; cursor:pointer;">
+                                <option value="terminal" selected>Current theme</option>
+                                <option value="dark">Dark</option>
+                                <option value="light">Light</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div style="display:flex; flex:1; overflow:hidden;">
+                    <div style="width:64px; border-right:1px solid var(--border-color); display:flex; flex-direction:column; align-items:center; padding:8px 0; background:var(--bg-secondary);">
+                        <div class="guild-btn" data-guild="me" style="width:40px;height:40px;border-radius:50%;margin-bottom:12px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border-color);background:white;color:black;cursor:pointer;">ME</div>
+                        <div class="guild-btn" data-guild="gi" style="width:40px;height:40px;border-radius:50%;margin-bottom:12px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border-color);background:transparent;color:var(--text-secondary);cursor:pointer;">GI</div>
+                        <div class="guild-btn" data-guild="tm" style="width:40px;height:40px;border-radius:50%;margin-bottom:12px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border-color);background:transparent;color:var(--text-secondary);cursor:pointer;">TM</div>
+                        <div class="guild-btn" data-guild="sug" style="width:40px;height:40px;border-radius:50%;margin-bottom:12px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border-color);background:transparent;color:var(--text-secondary);cursor:pointer;">SUG</div>
+                    </div>
+                    <div style="width:280px; border-right:1px solid var(--border-color); display:flex; flex-direction:column; background:var(--bg-secondary);">
+                        <div style="padding:8px; border-bottom:1px solid var(--border-color); font-weight:bold; color:var(--text-primary);" id="guild-name">Members</div>
+                        <div style="flex:1; overflow-y:auto; padding:8px;" id="tab-content">
+                            <div id="members-list" style="display:block;"><div style="color:var(--text-secondary); padding:8px;">No members yet...</div></div>
+                            <div id="gifting-list" style="display:none;"><div style="color:var(--text-secondary); padding:8px;">No gifts yet...</div></div>
+                            <div id="tagged-content" style="display:none; color:var(--text-secondary); padding:8px;">Tagged messages – coming soon</div>
+                            <div id="suggestions-list" style="display:none;"><div style="color:var(--text-secondary); padding:8px;">Loading suggestions...</div></div>
+                        </div>
+                        <div style="border-top:1px solid var(--border-color); padding:12px; background:var(--bg-secondary);">
+                            <div id="streamer-info-toggle" style="font-size:11px; color:var(--text-secondary); margin-bottom:8px; cursor:pointer; user-select:none;">🎮 STREAMER INFO</div>
+                            <div id="streamer-info-content" style="margin-bottom:20px; padding:8px; background:var(--bg-tertiary); border-radius:6px;">
+                                <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                                    <div style="width:8px; height:8px; background:#22c55e; border-radius:50%; animation:pulse 2s infinite;"></div>
+                                    <span style="font-size:13px; color:#4ade80; font-weight:bold;" id="hostname">${host}</span>
+                                    <span style="font-size:10px; color:var(--text-secondary); margin-left:auto;">🎙️ STREAMER</span>
+                                </div>
+                                <div style="font-size:11px; color:var(--text-primary); margin-left:16px;">
+                                    <div>🆔 Streamer ID: <span id="bigo-id">${bigo}</span></div>
+                                    <div>🫘 Total Beans: <span id="total-beans">${bean}</span></div>
+                                    <div style="display:flex; align-items:center; gap:6px; margin-top:2px; flex-wrap:wrap;">
+                                        <span>📊 Beans This Month: <span id="monthly-beans-display">Inconclusive</span></span>
+                                        <span id="edit-monthly-beans" style="cursor:pointer; font-size:14px; color:var(--text-secondary);">✏️</span>
+                                    </div>
+                                    <div id="monthly-beans-edit-container" style="display:none; margin-top:4px;">
+                                        <input type="number" id="monthly-beans-input" placeholder="Beans at month start" step="1" min="0" style="width:120px; padding:4px; background:var(--bg-primary); border:1px solid var(--border-color); color:var(--text-primary); border-radius:3px; font-size:12px;">
+                                        <span style="font-size:11px; color:var(--text-secondary); margin-left:4px;">(Enter to save, Esc to cancel)</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="pk-info" style="margin-top:8px; border-top:1px solid var(--border-color); padding-top:8px;">
+                                <div style="color:var(--text-secondary); font-size:11px; padding:4px 0;">No PK started</div>
+                            </div>
+                            <div style="margin-top:8px;">
+                                <button id="toggle-vid-btn" style="width:100%; padding:6px; background:var(--bg-tertiary); border:1px solid var(--border-color); color:var(--text-primary); border-radius:4px; cursor:pointer;">🎥 Toggle Video (Collapsed)</button>
+                            </div>
+                            <div id="video-container" style="display: none; margin-bottom: 12px; background: #000; border-radius: 4px; overflow: hidden; min-height: 150px;"></div>
+                            <div style="border-top:1px solid var(--border-color); padding-top:12px;">
+                                <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+                                    <div style="width:8px; height:8px; background:#3b82f6; border-radius:50%; animation:pulse 2s infinite;"></div>
+                                    <span style="font-size:12px; color:#60a5fa; font-weight:bold;">🎵 AUDIO STREAM</span>
+                                </div>
+                                <div id="audio-visualizer" style="font-family:monospace; font-size:11px; letter-spacing:1px; margin-bottom:12px; color:#3b82f6; background:var(--bg-primary); padding:8px; border-radius:4px; text-align:center; min-height:32px;">▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁</div>
+                                <div style="margin-bottom:8px;">
+                                    <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                                        <span id="volume-icon" style="font-size:12px; color:var(--text-primary);">🔊</span>
+                                        <input type="range" id="volume-slider" min="0" max="100" value="100" style="flex:1; height:4px; border-radius:2px; background:var(--border-color); cursor:pointer;">
+                                        <span id="volume-percent" style="font-size:11px; min-width:40px; color:var(--text-primary);">100%</span>
+                                    </div>
+                                </div>
+                                <div style="display:flex; gap:8px;">
+                                    <button id="play-pause-btn" style="flex:1; padding:8px; background:var(--bg-tertiary); border:1px solid var(--border-color); color:var(--text-primary); border-radius:4px; cursor:pointer;">▶ PLAY</button>
+                                    <button id="mute-btn" style="padding:8px 16px; background:var(--bg-tertiary); border:1px solid var(--border-color); color:var(--text-primary); border-radius:4px; cursor:pointer;">MUTE</button>
+                                </div>
+                                <div style="font-size:9px; color:var(--text-secondary); margin-top:10px; text-align:center;">Controlling: #liveVideo_html5_api</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="flex:1; display:flex; flex-direction:column; background:var(--bg-primary); overflow:hidden;">
+                        <div id="chat-messages" style="flex:1; overflow-y:auto; padding:12px; font-size:13px; display:flex; flex-direction:column; gap:4px;">
+                            <div style="color:var(--text-secondary); text-align:center; padding:20px;">Loading chat history...</div>
+                        </div>
+                        <div id="chat-input-area" style="border-top:1px solid var(--border-color); padding:8px 12px; background:var(--bg-secondary); display:flex; align-items:center; gap:8px;">
+                            <span style="color:#22c55e;">&gt;</span>
+                            <input id="chat-input-placeholder" type="text" placeholder="Read‑only chat mirror" style="flex:1; background:transparent; border:none; color:var(--text-primary); outline:none; font-family:var(--font-family);" disabled>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <style>
+                @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+                .user-grade {
+                    display: inline-block;
+                    background-size: 100% 100%;
+                    background-repeat: no-repeat;
+                    text-align: center;
+                    vertical-align: middle;
+                }
+
+                /* --- CHAT STYLES --- */
+                .chat-msg-wrapper {
+                    font-size: 12px;
+                    border-bottom: 1px solid var(--border-color);
+                    padding: 4px 0;
+                }
+                .chat-msg-bubble {
+                    display: flex;
+                    gap: 8px;
+                    flex-wrap: wrap;
+                    align-items: center;
+                    width: 100%;
+                }
+                .chat-msg-header-inline {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                }
+                .chat-colon { display: inline; }
+                .chat-time {
+                    margin-left: auto;
+                    color: var(--text-secondary);
+                    font-size: 11px;
+                    white-space: nowrap;
+                }
+
+                /* Bubble overrides for Dark / Light themes */
+                [data-theme="dark"] .chat-msg-wrapper,
+                [data-theme="light"] .chat-msg-wrapper {
+                    border-bottom: none;
+                    padding: 4px 0;
+                    margin-bottom: 4px;
+                }
+                [data-theme="dark"] .chat-msg-bubble,
+                [data-theme="light"] .chat-msg-bubble {
+                    display: inline-block;
+                    background: var(--bg-tertiary);
+                    padding: 8px 12px;
+                    border-radius: 12px;
+                    border-top-left-radius: 2px;
+                    width: auto;
+                    max-width: 90%;
+                    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+                }
+                [data-theme="dark"] .chat-msg-header-inline,
+                [data-theme="light"] .chat-msg-header-inline {
+                    display: inline-flex;
+                    margin-right: 4px;
+                    margin-bottom: 2px;
+                    vertical-align: baseline;
+                }
+                [data-theme="dark"] .chat-colon,
+                [data-theme="light"] .chat-colon {
+                    display: none;
+                }
+                [data-theme="dark"] .chat-text,
+                [data-theme="light"] .chat-text {
+                    display: inline;
+                    line-height: 1.4;
+                }
+                [data-theme="dark"] .chat-time,
+                [data-theme="light"] .chat-time {
+                    display: block;
+                    margin-left: 0;
+                    text-align: right;
+                    font-size: 10px;
+                    margin-top: 4px;
+                    opacity: 0.8;
+                }
+            </style>
+        `;
+
+        // ---- Set up monthly beans inline edit ----
+        const editBtn = document.getElementById('edit-monthly-beans');
+        const editContainer = document.getElementById('monthly-beans-edit-container');
+        const inputField = document.getElementById('monthly-beans-input');
+        const displaySpan = document.getElementById('monthly-beans-display');
+
+        if (editBtn && editContainer && inputField) {
+            let previousValue = '';
+
+            editBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                editContainer.style.display = 'block';
+                if (bigoId) {
+                    const startVal = getMonthlyStartBeans(bigoId);
+                    if (startVal !== null && !isNaN(startVal)) {
+                        inputField.value = startVal;
+                        previousValue = startVal.toString();
+                    } else {
+                        inputField.value = '';
+                        previousValue = '';
+                    }
+                }
+                inputField.focus();
+                inputField.select();
+            });
+
+            inputField.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const val = parseFloat(inputField.value);
+                    if (!isNaN(val) && val >= 0 && bigoId) {
+                        setMonthlyStartBeans(bigoId, val);
+                        updateStreamerInfo();
+                        editContainer.style.display = 'none';
+                        if (displaySpan && bigoId) {
+                            const startVal = getMonthlyStartBeans(bigoId);
+                            const total = parseFloat(beanCount) || 0;
+                            if (startVal !== null && !isNaN(startVal)) {
+                                const monthly = Math.max(0, total - startVal);
+                                displaySpan.textContent = monthly.toString();
+                            } else {
+                                displaySpan.textContent = 'Inconclusive';
+                            }
+                        }
+                    } else {
+                        alert('Please enter a valid non-negative number.');
+                    }
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    editContainer.style.display = 'none';
+                    inputField.value = previousValue;
+                }
+            });
+        } else {
+            console.log('[Bigo Overlay] Monthly beans edit elements not found');
+        }
+
+        // ---- Theme selector ----
+        const themeSelect = document.getElementById('theme-selector');
+        if (themeSelect) {
+            themeSelect.value = getSavedTheme();
+            themeSelect.addEventListener('change', function() {
+                setTheme(this.value);
             });
         }
 
-        // Also check periodically as a fallback
-        let attempts = 0;
-        const interval = setInterval(() => {
-            if (findAndConvertVideo()) {
-                clearInterval(interval);
-                observer.disconnect();
+        // ---- Login link ----
+        const loginLink = document.getElementById('login-link');
+        if (loginLink) {
+            loginLink.addEventListener('click', function(e) {
+                e.preventDefault();
+                observeLoginModal();
+                let loginBtn = document.querySelector('.head-right__login__btn');
+                if (!loginBtn) {
+                    const retry = setInterval(() => {
+                        loginBtn = document.querySelector('.head-right__login__btn');
+                        if (loginBtn) {
+                            clearInterval(retry);
+                            clickLoginButton(loginBtn);
+                        }
+                    }, 500);
+                    setTimeout(() => clearInterval(retry), 5000);
+                } else {
+                    clickLoginButton(loginBtn);
+                }
+            });
+        }
+
+        // ---- Toggle Streamer Info ----
+        const toggleInfoBtn = document.getElementById('streamer-info-toggle');
+        const infoContent = document.getElementById('streamer-info-content');
+        if (toggleInfoBtn && infoContent) {
+            toggleInfoBtn.addEventListener('click', () => {
+                const isVisible = infoContent.style.display !== 'none';
+                infoContent.style.display = isVisible ? 'none' : 'block';
+            });
+        }
+
+        // ---- Audio controls ----
+        document.getElementById('play-pause-btn')?.addEventListener('click', togglePlayPause);
+        document.getElementById('mute-btn')?.addEventListener('click', toggleMute);
+        document.getElementById('volume-slider')?.addEventListener('input', (e) => setVolume(e.target.value / 100));
+
+        // ---- Video toggle ----
+        const vidToggle = document.getElementById('toggle-vid-btn');
+        const videoContainer = document.getElementById('video-container');
+        let isVideoVisible = false;
+        if (vidToggle && videoContainer) {
+            vidToggle.addEventListener('click', () => {
+                const video = document.querySelector('#liveVideo_html5_api');
+                if (!video) return;
+                if (!isVideoVisible) {
+                    if (!videoMoved) {
+                        videoContainer.appendChild(video);
+                        video.setAttribute('style',
+                            'position: relative !important; opacity: 1 !important; visibility: visible !important; ' +
+                            'width: 100% !important; height: auto !important; max-height: 180px !important; ' +
+                            'object-fit: contain !important; background-color: #000 !important; border-radius: 4px !important; ' +
+                            'pointer-events: none !important; top: auto !important; left: auto !important;'
+                        );
+                        videoMoved = true;
+                    }
+                    videoContainer.style.display = 'block';
+                    vidToggle.textContent = '🎥 Toggle Video (Expanded)';
+                    vidToggle.style.background = '#3a6ea5';
+                    isVideoVisible = true;
+                } else {
+                    videoContainer.style.display = 'none';
+                    vidToggle.textContent = '🎥 Toggle Video (Collapsed)';
+                    vidToggle.style.background = 'var(--bg-tertiary)';
+                    isVideoVisible = false;
+                }
+            });
+        }
+
+        // ---- Tab switching ----
+        const meDiv = document.getElementById('members-list');
+        const giDiv = document.getElementById('gifting-list');
+        const tmDiv = document.getElementById('tagged-content');
+        const sugDiv = document.getElementById('suggestions-list');
+        const guildNameSpan = document.getElementById('guild-name');
+        const guildBtns = document.querySelectorAll('.guild-btn');
+
+        function switchTab(tab) {
+            const allContent = [meDiv, giDiv, tmDiv, sugDiv];
+            allContent.forEach(el => { if (el) el.style.display = 'none'; });
+            if (tab === 'me') {
+                if (meDiv) meDiv.style.display = 'block';
+                if (guildNameSpan) guildNameSpan.textContent = 'Members';
+                renderMembersList();
+            } else if (tab === 'gi') {
+                if (giDiv) giDiv.style.display = 'block';
+                if (guildNameSpan) guildNameSpan.textContent = 'Gifting';
+                renderGiftList();
+            } else if (tab === 'tm') {
+                if (tmDiv) tmDiv.style.display = 'block';
+                if (guildNameSpan) guildNameSpan.textContent = 'Tagged Messages';
+            } else if (tab === 'sug') {
+                if (sugDiv) sugDiv.style.display = 'block';
+                if (guildNameSpan) guildNameSpan.textContent = 'Suggestions';
+                renderSuggestions();
             }
-            attempts++;
-            if (attempts > 100) { // Stop after 10 seconds (100 * 100ms)
+        }
+
+        guildBtns.forEach(btn => {
+            btn.addEventListener('click', function() {
+                const guild = this.getAttribute('data-guild');
+                if (!guild) return;
+                guildBtns.forEach(b => {
+                    b.style.background = 'transparent';
+                    b.style.color = 'var(--text-secondary)';
+                });
+                this.style.background = 'white';
+                this.style.color = 'black';
+                switchTab(guild);
+            });
+        });
+        switchTab('me');
+
+        // ---- Update login UI and intervals ----
+        updateLoginUI();
+        setInterval(updateLoginUI, 2000);
+
+        updatePKUI();
+
+        if (pkMonitorInterval) clearInterval(pkMonitorInterval);
+        pkMonitorInterval = setInterval(scanForPK, 2000);
+        setTimeout(scanForPK, 1000);
+
+        setupChatObserver();
+
+        // ---- Click-to-reply ----
+        const chatMessages = document.getElementById('chat-messages');
+        if (chatMessages) {
+            chatMessages.addEventListener('click', function(e) {
+                const target = e.target.closest('.chat-username');
+                if (target) {
+                    const username = target.textContent.trim();
+                    const input = document.getElementById('overlay-chat-input');
+                    if (input) {
+                        input.value = '@' + username + ' ';
+                        input.focus();
+                        const len = input.value.length;
+                        input.setSelectionRange(len, len);
+                    }
+                }
+            });
+        }
+
+        // ---- Initial suggestions render ----
+        setTimeout(renderSuggestions, 2000);
+        setInterval(renderSuggestions, 30000);
+
+        // ---- Update bean info periodically ----
+        updateStreamerInfo();
+        setInterval(updateStreamerInfo, 5000);
+    }
+
+    // ---- Audio control implementations ----
+    togglePlayPause = function() {
+        const video = document.querySelector('#liveVideo_html5_api');
+        if (!video) return;
+        if (video.paused) video.play().catch(e => console.log('Play error:', e));
+        else video.pause();
+        updateUI();
+    };
+    toggleMute = function() {
+        const video = document.querySelector('#liveVideo_html5_api');
+        if (!video) return;
+        video.muted = !video.muted;
+        updateUI();
+    };
+    setVolume = function(value) {
+        const video = document.querySelector('#liveVideo_html5_api');
+        if (!video) return;
+        let vol = parseFloat(value);
+        if (isNaN(vol)) vol = 1;
+        video.volume = Math.min(1, Math.max(0, vol));
+        if (vol === 0) video.muted = true;
+        else if (video.muted) video.muted = false;
+        updateUI();
+    };
+    updateUI = function() {
+        const video = document.querySelector('#liveVideo_html5_api');
+        const playPauseBtn = document.getElementById('play-pause-btn');
+        const muteBtn = document.getElementById('mute-btn');
+        const volumeSlider = document.getElementById('volume-slider');
+        const volumePercent = document.getElementById('volume-percent');
+        const volumeIcon = document.getElementById('volume-icon');
+        if (video) {
+            if (playPauseBtn) playPauseBtn.textContent = video.paused ? '▶ PLAY' : '⏸ PAUSE';
+            if (muteBtn) muteBtn.textContent = video.muted ? 'UNMUTE' : 'MUTE';
+            if (volumeSlider) {
+                const displayVol = video.muted ? 0 : video.volume;
+                volumeSlider.value = displayVol * 100;
+                if (volumePercent) volumePercent.textContent = `${Math.round(displayVol * 100)}%`;
+                if (volumeIcon) volumeIcon.textContent = (video.muted || video.volume === 0) ? '🔇' : '🔊';
+            }
+        }
+    };
+    startVisualizer = function() {
+        const visualizerDiv = document.getElementById('audio-visualizer');
+        if (!visualizerDiv) return;
+        const chars = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+        function animate() {
+            const video = document.querySelector('#liveVideo_html5_api');
+            if (video && !video.paused && !video.muted && video.volume > 0) {
+                const intensity = Math.min(1, video.volume * 1.2);
+                const maxHeight = Math.floor(intensity * 7) + 1;
+                let visual = '';
+                for (let i = 0; i < 25; i++) {
+                    const h = Math.floor(Math.random() * maxHeight) + 1;
+                    visual += chars[Math.min(h, chars.length - 1)];
+                }
+                visualizerDiv.textContent = visual;
+                visualizerDiv.style.opacity = '1';
+            } else {
+                visualizerDiv.textContent = '▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁';
+                visualizerDiv.style.opacity = '0.3';
+            }
+            requestAnimationFrame(animate);
+        }
+        animate();
+    };
+
+    // ---- Chat extraction ----
+    function extractChatMessages() {
+        const chatContainer = document.querySelector('.chat__container');
+        if (!chatContainer) return;
+
+        const newHtml = chatContainer.innerHTML;
+        if (newHtml === lastChatHtml) return;
+        lastChatHtml = newHtml;
+
+        const items = chatContainer.querySelectorAll('.chat-item:not(.chat-item-hide)');
+        const newMessages = [];
+
+        for (const item of items) {
+            const userNameSpan = item.querySelector('.user-name');
+            const textSpan = item.querySelector('.user-text-content');
+            if (!userNameSpan || !textSpan) continue;
+            let userName = userNameSpan.textContent.trim().replace(/\s+/g, ' ');
+            let fullMessage = textSpan.textContent.trim();
+            if (!fullMessage) continue;
+
+            const levelInfo = extractLevelInfo(item);
+
+            const messageKey = `${userName}|${fullMessage}`;
+            if (displayedMessages.has(messageKey)) continue;
+            displayedMessages.add(messageKey);
+            if (displayedMessages.size > 500) {
+                const toDelete = [...displayedMessages].slice(0, 100);
+                toDelete.forEach(k => displayedMessages.delete(k));
+            }
+
+            const now = new Date();
+            const timeStr = formatTimestamp(now);
+
+            const msgData = {
+                userName,
+                message: fullMessage,
+                timeStr,
+                level: levelInfo.level,
+                levelImage: levelInfo.levelImage
+            };
+            newMessages.push(msgData);
+
+            if (fullMessage.includes('sent a')) {
+                let giftPart = fullMessage.split('sent a')[1];
+                if (giftPart) giftPart = giftPart.trim();
+                else giftPart = fullMessage;
+                addGiftEntry(userName, `sent a ${giftPart}`, levelInfo);
+            }
+
+            addOrIncrementMember(userName, levelInfo);
+        }
+
+        if (newMessages.length === 0) return;
+
+        const chatDiv = document.getElementById('chat-messages');
+        if (!chatDiv) return;
+        if (chatDiv.children.length === 1 &&
+            (chatDiv.children[0].innerText.includes('No chat history') ||
+             chatDiv.children[0].innerText.includes('Loading chat history'))) {
+            chatDiv.innerHTML = '';
+        }
+        for (const msg of newMessages) {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = 'chat-msg-wrapper';
+
+            let levelHtml = '';
+            if (msg.levelImage) {
+                levelHtml = `<div class="user-grade" style="display:inline-block; background-image:url('${msg.levelImage}'); background-size:100% 100%; background-repeat:no-repeat; width:41px; height:18.7px; font-size:11px; color:#fff; line-height:18.7px; text-align:center; padding:1px 0; vertical-align:middle; margin-right:4px;">${escapeHtml(msg.level)}</div>`;
+            }
+
+            msgDiv.innerHTML = `
+                <div class="chat-msg-bubble">
+                    <div class="chat-msg-header-inline">
+                        ${levelHtml}
+                        <span class="chat-username" style="color:#4ade80; font-weight:bold; cursor:pointer;">${escapeHtml(msg.userName)}</span>
+                        <span class="chat-colon" style="color:var(--text-primary);">:</span>
+                    </div>
+                    <span class="chat-text" style="color:var(--text-primary); word-break:break-word;">${escapeHtml(msg.message)}</span>
+                    <span class="chat-time">${escapeHtml(msg.timeStr)}</span>
+                </div>
+            `;
+            chatDiv.appendChild(msgDiv);
+        }
+        chatDiv.scrollTop = chatDiv.scrollHeight;
+
+        if (currentStreamerId && newMessages.length) {
+            appendChatHistory(currentStreamerId, newMessages);
+        }
+    }
+
+    function startChatPolling() {
+        if (chatUpdateInterval) clearInterval(chatUpdateInterval);
+        chatUpdateInterval = setInterval(extractChatMessages, 50);
+    }
+
+    function waitForVideoAndInit() {
+        let attempts = 0;
+        const maxAttempts = 100;
+        const interval = setInterval(() => {
+            const video = document.querySelector('#liveVideo_html5_api');
+            if (video) {
                 clearInterval(interval);
-                console.log('Video element not found after 10 seconds');
+                console.log('[Bigo Overlay] Video found – building overlay');
+                hideOriginalContent();
+                createOverlayContainer();
+                buildTerminalUI();
+                startVisualizer();
+                updateUI();
+                video.addEventListener('play', updateUI);
+                video.addEventListener('pause', updateUI);
+                video.addEventListener('volumechange', updateUI);
+                if (video.paused) video.play().catch(e => console.log('Autoplay blocked'));
+
+                if (document.querySelector('.chat__container')) startChatPolling();
+                else {
+                    const waitChat = setInterval(() => {
+                        if (document.querySelector('.chat__container')) {
+                            clearInterval(waitChat);
+                            startChatPolling();
+                        }
+                    }, 200);
+                }
+            } else {
+                attempts++;
+                if (attempts >= maxAttempts) {
+                    clearInterval(interval);
+                    console.log('[Bigo Overlay] No video element – aborting');
+                }
             }
         }, 100);
     }
 
-    // Handle page navigation in Bigo.tv (SPA behavior)
-    let lastUrl = location.href;
-    new MutationObserver(() => {
-        const url = location.href;
-        if (url !== lastUrl) {
-            lastUrl = url;
-            if (isTargetUrl()) {
-                console.log('URL changed, rechecking for video element');
-                setTimeout(findAndConvertVideo, 1000);
-            }
-        }
-    }).observe(document, { subtree: true, childList: true });
-
-    // Start the script
-    initialize();
-
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', waitForVideoAndInit);
+    } else {
+        waitForVideoAndInit();
+    }
 })();
