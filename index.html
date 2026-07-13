@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Discord Hackers - Bigo.tv Audio Terminal
 // @namespace    http://tampermonkey.net/
-// @version      20.15
+// @version      20.16
 // @description  PK detection, chat, themes, logout, level badges, daily counts, suggestions, reply click, favicon, total/monthly beans with inline edit, localStorage quota fix, right sidebar, keyword tagging.
 // @author       You
 // @match        https://www.bigo.tv/*
@@ -166,7 +166,7 @@
                 date: data.date || ''
             }))
             .sort((a, b) => b.lastSeen - a.lastSeen)
-            .slice(0, 500); 
+            .slice(0, 500);
         try {
             localStorage.setItem(getMembersKey(streamerId), JSON.stringify(arr));
         } catch(e) {
@@ -494,10 +494,9 @@
         }
         const now = new Date();
         const timeStr = formatTimestamp(now);
-        
+
         const msgDiv = document.createElement('div');
         msgDiv.className = 'chat-msg-wrapper';
-        msgDiv.style.color = '#fbbf24';
 
         msgDiv.innerHTML = `
             <div class="chat-msg-bubble">
@@ -985,7 +984,7 @@
         if (bigoSpan) bigoSpan.textContent = bigoId || '?';
         const totalBeanSpan = document.getElementById('total-beans');
         if (totalBeanSpan) totalBeanSpan.textContent = beanCount || '0';
-        
+
         // Update monthly beans display
         const monthlyDisplaySpan = document.getElementById('monthly-beans-display');
         if (monthlyDisplaySpan && bigoId) {
@@ -1020,7 +1019,7 @@
                 '--border-color': '#444444',
                 '--text-primary': '#cccccc',
                 '--text-secondary': '#666666',
-                '--font-family': 'monospace',
+                '--font-family': "'Helvetica Neue', Helvetica, Arial, sans-serif",  // Changed
                 '--border-radius': '0px',
             },
             dark: {
@@ -1030,7 +1029,7 @@
                 '--border-color': '#3a3a3a',
                 '--text-primary': '#f5f5f7',
                 '--text-secondary': '#98989d',
-                '--font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+                '--font-family': "'Helvetica Neue', Helvetica, Arial, sans-serif",  // Changed
                 '--border-radius': '8px',
             },
             light: {
@@ -1040,7 +1039,7 @@
                 '--border-color': '#d1d1d6',
                 '--text-primary': '#1d1d1f',
                 '--text-secondary': '#6e6e73',
-                '--font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+                '--font-family': "'Helvetica Neue', Helvetica, Arial, sans-serif",  // Changed
                 '--border-radius': '8px',
             }
         };
@@ -1110,21 +1109,21 @@
                         <div style="flex:1; overflow-y:auto; padding:8px;" id="tab-content">
                             <div id="members-list" style="display:block;"><div style="color:var(--text-secondary); padding:8px;">No members yet...</div></div>
                             <div id="gifting-list" style="display:none;"><div style="color:var(--text-secondary); padding:8px;">No gifts yet...</div></div>
-                            
+
                             <div id="tagged-content" style="display:none; flex-direction:column; height:100%;">
                                 <input type="text" id="tagged-keyword-input" placeholder="Enter keyword to track..." style="width:100%; padding:6px; background:var(--bg-primary); border:1px solid var(--border-color); color:var(--text-primary); border-radius:4px; font-size:12px; margin-bottom:8px; box-sizing:border-box;">
                                 <div id="tagged-messages-list" style="flex:1; overflow-y:auto; font-size:12px; display:flex; flex-direction:column; gap:4px;">
                                     <div style="color:var(--text-secondary); padding:8px;">Waiting for matching messages...</div>
                                 </div>
                             </div>
-                            
+
                             <div id="suggestions-list" style="display:none;"><div style="color:var(--text-secondary); padding:8px;">Loading suggestions...</div></div>
                         </div>
                     </div>
 
                     <!-- CENTER AREA (CHAT) -->
                     <div style="flex:1; display:flex; flex-direction:column; background:var(--bg-primary); overflow:hidden;">
-                        <div id="chat-messages" style="flex:1; overflow-y:auto; padding:12px; font-size:13px; display:flex; flex-direction:column; gap:4px;">
+                        <div id="chat-messages" style="flex:1; overflow-y:auto; padding:12px; font-size:13px; display:flex; flex-direction:column; gap:4px; scroll-behavior: smooth;">
                             <div style="color:var(--text-secondary); text-align:center; padding:20px;">Loading chat history...</div>
                         </div>
                         <div id="chat-input-area" style="border-top:1px solid var(--border-color); padding:8px 12px; background:var(--bg-secondary); display:flex; align-items:center; gap:8px;">
@@ -1164,7 +1163,7 @@
                             <button id="toggle-vid-btn" style="width:100%; padding:6px; background:var(--bg-tertiary); border:1px solid var(--border-color); color:var(--text-primary); border-radius:4px; cursor:pointer;">🎥 Toggle Video (Collapsed)</button>
                         </div>
                         <div id="video-container" style="display: none; margin-bottom: 12px; margin-top: 8px; background: #000; border-radius: 4px; overflow: hidden; min-height: 150px;"></div>
-                        
+
                         <div style="border-top:1px solid var(--border-color); padding-top:12px; margin-top:8px;">
                             <div style="display:flex; align-items:center; gap:8px;">
                                 <button id="play-pause-btn" style="background:transparent; border:none; color:var(--text-primary); cursor:pointer; font-size:16px; padding:0; display:flex; align-items:center; justify-content:center; width:24px; height:24px;" title="Play/Pause">
@@ -1185,6 +1184,22 @@
             </div>
             <style>
                 @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+
+                /* --- New message slide-in animation --- */
+                @keyframes slideIn {
+                    from {
+                        opacity: 0;
+                        transform: translateY(20px) scale(0.96);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0) scale(1);
+                    }
+                }
+                .chat-msg-wrapper-new {
+                    animation: slideIn 0.3s ease-out forwards;
+                }
+
                 .user-grade {
                     display: inline-block;
                     background-size: 100% 100%;
@@ -1192,7 +1207,7 @@
                     text-align: center;
                     vertical-align: middle;
                 }
-                
+
                 /* --- CHAT STYLES --- */
                 .chat-msg-wrapper {
                     font-size: 12px;
@@ -1238,14 +1253,14 @@
                     border-radius: 12px;
                     border-top-left-radius: 2px;
                     max-width: 90%;
-                    gap: 0; 
+                    gap: 0;
                     box-shadow: 0 1px 2px rgba(0,0,0,0.1);
                 }
                 [data-theme="dark"] .chat-msg-header-inline,
                 [data-theme="light"] .chat-msg-header-inline {
                     width: 100%;
                     margin-bottom: 4px;
-                    flex-wrap: wrap; 
+                    flex-wrap: wrap;
                 }
                 [data-theme="dark"] .chat-colon,
                 [data-theme="light"] .chat-colon {
@@ -1329,7 +1344,7 @@
                     } else {
                         alert('Please enter a valid non-negative number.');
                     }
-                } else if (e.key === 'Escape') {
+                } else if (e.key === 'Esc' || e.key === 'Escape') {
                     e.preventDefault();
                     editContainer.style.display = 'none';
                     inputField.value = previousValue;
@@ -1534,7 +1549,7 @@
         const iconMute = document.getElementById('icon-mute');
         const volumeSlider = document.getElementById('volume-slider');
         const volumePercent = document.getElementById('volume-percent');
-        
+
         if (video) {
             if (iconPlay && iconPause) {
                 iconPlay.style.display = video.paused ? 'block' : 'none';
@@ -1620,7 +1635,8 @@
         }
         for (const msg of newMessages) {
             const msgDiv = document.createElement('div');
-            msgDiv.className = 'chat-msg-wrapper';
+            // Add the animation class
+            msgDiv.className = 'chat-msg-wrapper chat-msg-wrapper-new';
 
             let levelHtml = '';
             if (msg.levelImage) {
@@ -1641,7 +1657,8 @@
             `;
             chatDiv.appendChild(msgDiv);
         }
-        chatDiv.scrollTop = chatDiv.scrollHeight;
+        // Smooth scroll to bottom
+        chatDiv.scrollTo({ top: chatDiv.scrollHeight, behavior: 'smooth' });
 
         if (currentStreamerId && newMessages.length) {
             appendChatHistory(currentStreamerId, newMessages);
